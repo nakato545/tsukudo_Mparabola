@@ -1,0 +1,232 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>モンスター明るさ実験（顔下表示版）</title>
+<style>
+  body {
+    margin: 0;
+    background: #f0f9ff;
+    font-family: sans-serif;
+    text-align: center;
+  }
+  #modeButtons { margin: 10px; }
+  button { padding: 10px 18px; margin: 5px; font-size: 16px; }
+  #settingsArea { display: none; padding: 10px; background: #eef7ff; border-top: 2px solid #ccc; }
+  #brightnessDisplay {
+    font-size: 32px; font-weight: bold; color: #004477;
+    text-shadow: 2px 2px 4px white; pointer-events: none;
+    margin-top: -60px;  /* 顔の下あたりに配置 */
+    display: none;
+  }
+  canvas { display:block; margin: 40px auto; border-radius:6px; background:#eef; box-shadow:0 4px 10px rgba(0,0,0,0.08); }
+</style>
+</head>
+
+<body>
+
+<div id="modeButtons">
+  <button id="btnSettings">⚙ 設定モード</button>
+  <button id="btnExperiment">🔬 実験モード</button>
+  <button id="btnToggleCamera">📷 カメラ ON</button>
+</div>
+
+<canvas id="monsterCanvas" width="420" height="420"></canvas>
+<div id="brightnessDisplay">明るさ: --</div>
+
+<div id="settingsArea">
+  <h2>閾値の設定（4段階）</h2>
+  暗い（弱）: <input id="t1" type="number" value="20"> lux以下<br>
+  やや暗い: <input id="t2" type="number" value="40"> lux以下<br>
+  やや明るい: <input id="t3" type="number" value="80"> lux以下<br>
+  明るい（最大）: <input id="t4" type="number" value="200"><br><br>
+  <small>※ カメラOFF時は最後の明るさが残ります。</small>
+</div>
+
+<script>
+// ----------------------
+// DOM & グローバル
+// ----------------------
+const canvas = document.getElementById('monsterCanvas');
+const ctx = canvas.getContext('2d');
+
+const btnSettings = document.getElementById('btnSettings');
+const btnExperiment = document.getElementById('btnExperiment');
+const btnToggleCamera = document.getElementById('btnToggleCamera');
+const settingsArea = document.getElementById('settingsArea');
+const brightnessDisplay = document.getElementById('brightnessDisplay');
+
+const inputT1 = document.getElementById('t1');
+const inputT2 = document.getElementById('t2');
+const inputT3 = document.getElementById('t3');
+const inputT4 = document.getElementById('t4');
+
+let mode = 'settings';
+let videoStream = null;
+let brightness = 0;
+let brightnessLoopRunning = false;
+
+// 目玉・まばたき
+let blinkState=0, blinking=false, blinkStart=0, nextBlinkAt=Date.now()+randomInterval();
+let eyeAngle=0;
+
+function randomInterval(){ return 2500 + Math.random()*4000; }
+
+// ----------------------
+// モード切替
+// ----------------------
+btnSettings.addEventListener('click', ()=>switchMode('settings'));
+btnExperiment.addEventListener('click', ()=>switchMode('experiment'));
+btnToggleCamera.addEventListener('click', toggleCamera);
+switchMode('settings');
+
+function switchMode(m){
+  mode=m;
+  if(mode==='settings'){
+    settingsArea.style.display='block';
+    brightnessDisplay.style.display='none';
+    btnToggleCamera.textContent = videoStream?'📷 カメラ OFF':'📷 カメラ ON';
+  } else {
+    settingsArea.style.display='none';
+    brightnessDisplay.style.display='block';
+    btnToggleCamera.textContent = videoStream?'📷 カメラ OFF':'📷 カメラ ON';
+  }
+}
+
+// ----------------------
+// カメラ ON/OFF
+// ----------------------
+async function toggleCamera(){
+  if(videoStream){
+    videoStream.getTracks().forEach(t=>t.stop());
+    videoStream=null;
+    brightnessLoopRunning=false;
+    btnToggleCamera.textContent='📷 カメラ ON';
+    alert('カメラ停止');
+    return;
+  }
+  try{
+    videoStream = await navigator.mediaDevices.getUserMedia({ video:{facingMode:'environment'} });
+    btnToggleCamera.textContent='📷 カメラ OFF';
+    startBrightnessLoop(videoStream);
+    alert('カメラ開始');
+  } catch(e){ alert('カメラ取得不可'); console.error(e); }
+}
+
+// ----------------------
+// 明るさループ
+// ----------------------
+function startBrightnessLoop(stream){
+  if(!stream||brightnessLoopRunning) return;
+  const video=document.createElement('video');
+  video.autoplay=true; video.playsInline=true; video.muted=true; video.srcObject=stream;
+
+  const tempCanvas=document.createElement('canvas');
+  const tctx=tempCanvas.getContext('2d');
+  brightnessLoopRunning=true;
+
+  function loopFunc(){
+    if(!videoStream){ brightnessLoopRunning=false; return; }
+    if(video.readyState>=2){
+      const w=160,h=Math.round(video.videoHeight/video.videoWidth*160)||120;
+      tempCanvas.width=w; tempCanvas.height=h;
+      try{
+        tctx.drawImage(video,0,0,w,h);
+        const img=tctx.getImageData(0,0,w,h).data;
+        let sum=0;
+        for(let i=0;i<img.length;i+=4) sum+=(img[i]+img[i+1]+img[i+2])/3;
+        brightness=Math.round(sum/(img.length/4)*1.2);
+      }catch(err){ console.warn(err); }
+    }
+    requestAnimationFrame(loopFunc);
+  }
+  loopFunc();
+}
+
+// ----------------------
+// まばたき更新
+// ----------------------
+function updateBlink(){
+  const now=Date.now();
+  if(!blinking && now>=nextBlinkAt){ blinking=true; blinkStart=now; }
+  if(blinking){
+    const elapsed=now-blinkStart, dur=300, p=elapsed/dur;
+    if(p>=1){ blinking=false; nextBlinkAt=now+randomInterval(); blinkState=0; }
+    else{ blinkState=p<0.5?map(p,0,0.5,1,0.05):map(p,0.5,1,0.05,1); }
+  }
+}
+
+// ----------------------
+// map
+// ----------------------
+function map(v,a,b,c,d){ return c + (d-c)*(v-a)/(b-a); }
+
+// ----------------------
+// 描画
+// ----------------------
+function drawMonster(){
+  const w=canvas.width,h=canvas.height;
+  ctx.clearRect(0,0,w,h);
+
+  const t1=Number(inputT1.value)||20;
+  const t2=Number(inputT2.value)||40;
+  const t3=Number(inputT3.value)||80;
+  const t4=Number(inputT4.value)||200;
+
+  let level=1;
+  if(brightness<=t1) level=1;
+  else if(brightness<=t2) level=2;
+  else if(brightness<=t3) level=3;
+  else level=4;
+
+  const baseSize=[110,140,170,200][level-1];
+  ctx.beginPath();
+  ctx.fillStyle=`rgba(255,230,200,0.45)`;
+  ctx.arc(w/2,h/2,baseSize/1.5,0,Math.PI*2); ctx.fill();
+
+  eyeAngle+=0.04;
+  const moveX=Math.cos(eyeAngle)*baseSize*0.06;
+  const moveY=Math.sin(eyeAngle*1.1)*baseSize*0.03;
+
+  updateBlink();
+
+  const eyeY=h/2 - baseSize*0.22;
+  const eyeW=baseSize*0.6, eyeH=baseSize*0.28*(0.2+0.8*blinkState);
+
+  ctx.beginPath(); ctx.fillStyle='white';
+  ctx.ellipse(w/2,eyeY,eyeW,eyeH,0,0,Math.PI*2); ctx.fill();
+
+  const pupilRadius=baseSize*0.09*(0.6+0.4*blinkState);
+  ctx.beginPath(); ctx.fillStyle='black';
+  ctx.arc(w/2+moveX,eyeY+moveY,pupilRadius,0,Math.PI*2); ctx.fill();
+
+  const mouthY=h/2 + baseSize*0.28;
+  ctx.lineWidth=Math.max(3,baseSize*0.03);
+  ctx.strokeStyle='black';
+  ctx.beginPath();
+  if(mode==='experiment'){
+    if(level===1) ctx.arc(w/2,mouthY+baseSize*0.03,baseSize*0.22,Math.PI,Math.PI*2);
+    else if(level===2){ ctx.moveTo(w/2-baseSize*0.22,mouthY); ctx.lineTo(w/2+baseSize*0.22,mouthY); }
+    else if(level===3) ctx.arc(w/2,mouthY,baseSize*0.22,0,Math.PI);
+    else ctx.arc(w/2,mouthY-baseSize*0.03,baseSize*0.32,0,Math.PI);
+  } else { ctx.moveTo(w/2-baseSize*0.22,mouthY); ctx.lineTo(w/2+baseSize*0.22,mouthY); }
+  ctx.stroke();
+}
+
+// ----------------------
+// メインループ
+// ----------------------
+function loop(){
+  drawMonster();
+  if(mode==='experiment'){
+    brightnessDisplay.style.display='block';
+    brightnessDisplay.innerText=`明るさ: ${brightness} lux`;
+  } else brightnessDisplay.style.display='none';
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+
+</body>
+</html>

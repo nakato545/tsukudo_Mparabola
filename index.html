@@ -1,29 +1,18 @@
-
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
-<title>モンスター明るさ実験（顔下表示版）</title>
+<title>モンスター明るさ実験（瞳孔動作・自然瞬き版）</title>
 <style>
-  body {
-    margin: 0;
-    background: #f0f9ff;
-    font-family: sans-serif;
-    text-align: center;
-  }
-  #modeButtons { margin: 10px; }
-  button { padding: 10px 18px; margin: 5px; font-size: 16px; }
-  #settingsArea { display: none; padding: 10px; background: #eef7ff; border-top: 2px solid #ccc; }
-  #brightnessDisplay {
-    font-size: 32px; font-weight: bold; color: #004477;
-    text-shadow: 2px 2px 4px white; pointer-events: none;
-    margin-top: -60px;  /* 顔の下あたりに配置 */
-    display: none;
-  }
-  canvas { display:block; margin: 40px auto; border-radius:6px; background:#eef; box-shadow:0 4px 10px rgba(0,0,0,0.08); }
+  body { margin:0; background:#f0f9ff; font-family:sans-serif; text-align:center; }
+  #modeButtons { margin:10px; }
+  button { padding:10px 18px; margin:5px; font-size:16px; }
+  #settingsArea { display:none; padding:10px; background:#eef7ff; border-top:2px solid #ccc; }
+  #brightnessDisplay { font-size:32px; font-weight:bold; color:#004477;
+    text-shadow:1px 1px 3px white; pointer-events:none; margin-top:40px; display:none; }
+  canvas { display:block; margin:40px auto; border-radius:6px; background:#eef; box-shadow:0 4px 10px rgba(0,0,0,0.08); }
 </style>
 </head>
-
 <body>
 
 <div id="modeButtons">
@@ -45,37 +34,31 @@
 </div>
 
 <script>
-// ----------------------
-// DOM & グローバル
-// ----------------------
 const canvas = document.getElementById('monsterCanvas');
 const ctx = canvas.getContext('2d');
-
 const btnSettings = document.getElementById('btnSettings');
 const btnExperiment = document.getElementById('btnExperiment');
 const btnToggleCamera = document.getElementById('btnToggleCamera');
 const settingsArea = document.getElementById('settingsArea');
 const brightnessDisplay = document.getElementById('brightnessDisplay');
-
 const inputT1 = document.getElementById('t1');
 const inputT2 = document.getElementById('t2');
 const inputT3 = document.getElementById('t3');
 const inputT4 = document.getElementById('t4');
 
-let mode = 'settings';
-let videoStream = null;
-let brightness = 0;
-let brightnessLoopRunning = false;
+let mode='settings', videoStream=null, brightness=0, brightnessLoopRunning=false;
 
-// 目玉・まばたき
+// 瞬き・瞳孔
 let blinkState=0, blinking=false, blinkStart=0, nextBlinkAt=Date.now()+randomInterval();
-let eyeAngle=0;
+let pupilOffsetX=0, pupilOffsetY=0;
 
-function randomInterval(){ return 2500 + Math.random()*4000; }
+function randomInterval(){ 
+  const base = 4000; 
+  const variance = 5000;
+  const brightFactor = Math.max(0.3, 1 - brightness/200);
+  return base*brightFactor + Math.random()*variance*brightFactor;
+}
 
-// ----------------------
-// モード切替
-// ----------------------
 btnSettings.addEventListener('click', ()=>switchMode('settings'));
 btnExperiment.addEventListener('click', ()=>switchMode('experiment'));
 btnToggleCamera.addEventListener('click', toggleCamera);
@@ -94,9 +77,6 @@ function switchMode(m){
   }
 }
 
-// ----------------------
-// カメラ ON/OFF
-// ----------------------
 async function toggleCamera(){
   if(videoStream){
     videoStream.getTracks().forEach(t=>t.stop());
@@ -114,9 +94,6 @@ async function toggleCamera(){
   } catch(e){ alert('カメラ取得不可'); console.error(e); }
 }
 
-// ----------------------
-// 明るさループ
-// ----------------------
 function startBrightnessLoop(stream){
   if(!stream||brightnessLoopRunning) return;
   const video=document.createElement('video');
@@ -144,27 +121,27 @@ function startBrightnessLoop(stream){
   loopFunc();
 }
 
-// ----------------------
-// まばたき更新
-// ----------------------
 function updateBlink(){
   const now=Date.now();
   if(!blinking && now>=nextBlinkAt){ blinking=true; blinkStart=now; }
   if(blinking){
-    const elapsed=now-blinkStart, dur=300, p=elapsed/dur;
+    const elapsed=now-blinkStart, dur=150, p=elapsed/dur;
     if(p>=1){ blinking=false; nextBlinkAt=now+randomInterval(); blinkState=0; }
-    else{ blinkState=p<0.5?map(p,0,0.5,1,0.05):map(p,0.5,1,0.05,1); }
+    else{ blinkState=p<0.5?map(p,0,0.5,0,1):map(p,0.5,1,1,0); }
   }
 }
 
-// ----------------------
-// map
-// ----------------------
+function updatePupil(){
+  // 白目内で小さくランダム移動
+  const maxOffset = 5;
+  pupilOffsetX += (Math.random()-0.5) * 0.5;
+  pupilOffsetY += (Math.random()-0.5) * 0.5;
+  pupilOffsetX = Math.max(-maxOffset, Math.min(maxOffset, pupilOffsetX));
+  pupilOffsetY = Math.max(-maxOffset, Math.min(maxOffset, pupilOffsetY));
+}
+
 function map(v,a,b,c,d){ return c + (d-c)*(v-a)/(b-a); }
 
-// ----------------------
-// 描画
-// ----------------------
 function drawMonster(){
   const w=canvas.width,h=canvas.height;
   ctx.clearRect(0,0,w,h);
@@ -180,43 +157,50 @@ function drawMonster(){
   else if(brightness<=t3) level=3;
   else level=4;
 
-  const baseSize=[110,140,170,200][level-1];
+  // 顔色：暗→薄グレー、明→淡黄色
+  const colors=['rgb(200,200,200)','rgb(220,220,180)','rgb(240,240,160)','rgb(255,255,180)'];
+  const faceColor = colors[level-1];
+
+  // 顔
+  const faceRadius = 150;
   ctx.beginPath();
-  ctx.fillStyle=`rgba(255,230,200,0.45)`;
-  ctx.arc(w/2,h/2,baseSize/1.5,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = faceColor;
+  ctx.arc(w/2,h/2,faceRadius,0,Math.PI*2);
+  ctx.fill();
 
-  eyeAngle+=0.04;
-  const moveX=Math.cos(eyeAngle)*baseSize*0.06;
-  const moveY=Math.sin(eyeAngle*1.1)*baseSize*0.03;
-
-  updateBlink();
-
-  const eyeY=h/2 - baseSize*0.22;
-  const eyeW=baseSize*0.6, eyeH=baseSize*0.28*(0.2+0.8*blinkState);
-
+  // 目：白目固定
+  const eyeY = h/2 - 40, eyeW = 50, eyeH = 30;
   ctx.beginPath(); ctx.fillStyle='white';
   ctx.ellipse(w/2,eyeY,eyeW,eyeH,0,0,Math.PI*2); ctx.fill();
 
-  const pupilRadius=baseSize*0.09*(0.6+0.4*blinkState);
+  // 瞳孔：円形、白目内で移動
+  const minPupil=6, maxPupil=18;
+  const pupilR = map(brightness,0,200,maxPupil,minPupil);
+  updatePupil();
   ctx.beginPath(); ctx.fillStyle='black';
-  ctx.arc(w/2+moveX,eyeY+moveY,pupilRadius,0,Math.PI*2); ctx.fill();
+  ctx.arc(w/2+pupilOffsetX, eyeY+pupilOffsetY, pupilR, 0, Math.PI*2);
+  ctx.fill();
 
-  const mouthY=h/2 + baseSize*0.28;
-  ctx.lineWidth=Math.max(3,baseSize*0.03);
-  ctx.strokeStyle='black';
-  ctx.beginPath();
-  if(mode==='experiment'){
-    if(level===1) ctx.arc(w/2,mouthY+baseSize*0.03,baseSize*0.22,Math.PI,Math.PI*2);
-    else if(level===2){ ctx.moveTo(w/2-baseSize*0.22,mouthY); ctx.lineTo(w/2+baseSize*0.22,mouthY); }
-    else if(level===3) ctx.arc(w/2,mouthY,baseSize*0.22,0,Math.PI);
-    else ctx.arc(w/2,mouthY-baseSize*0.03,baseSize*0.32,0,Math.PI);
-  } else { ctx.moveTo(w/2-baseSize*0.22,mouthY); ctx.lineTo(w/2+baseSize*0.22,mouthY); }
+  // 瞬き：瞼を顔色で描く（透けない）
+  updateBlink();
+  if(blinkState>0){
+    ctx.beginPath();
+    ctx.fillStyle = faceColor;
+    const coverH = eyeH*blinkState;
+    ctx.ellipse(w/2,eyeY,eyeW,coverH,0,0,Math.PI*2);
+    ctx.fill();
+  }
+
+  // 口
+  const mouthY = h/2 + 60;
+  ctx.lineWidth = 4; ctx.strokeStyle='black'; ctx.beginPath();
+  if(level===1) ctx.arc(w/2,mouthY+5,50,Math.PI,Math.PI*2);
+  else if(level===2){ ctx.moveTo(w/2-50,mouthY); ctx.lineTo(w/2+50,mouthY); }
+  else if(level===3) ctx.arc(w/2,mouthY,50,0,Math.PI);
+  else ctx.arc(w/2,mouthY-5,60,0,Math.PI);
   ctx.stroke();
 }
 
-// ----------------------
-// メインループ
-// ----------------------
 function loop(){
   drawMonster();
   if(mode==='experiment'){
